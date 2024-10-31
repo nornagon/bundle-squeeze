@@ -25,11 +25,12 @@ function findModule(modules: ModuleInfo[], id: string) {
   return modulesMapCache.get(modules)!.get(id);
 }
 
-const Module = function Module({
+function Module({
   modules,
   path,
   entryPoint = path[path.length - 1],
   hoveredModule,
+  selectedModule,
   sortKey,
   depth = 0,
 }: {
@@ -37,29 +38,35 @@ const Module = function Module({
   path: ModuleInfo[];
   entryPoint?: ModuleInfo;
   hoveredModule: Signal<ModuleInfo | null>;
+  selectedModule: Signal<ModuleInfo | null>;
   depth?: number;
   sortKey: SortKey;
 }) {
   const module = path[path.length - 1];
   const isOpen = useSignal(false);
+  const highlightedModule = useComputed(
+    () => hoveredModule.value ?? selectedModule.value
+  );
   const isDepOfHovered = useComputed(
     () =>
-      hoveredModule.value != null &&
-      allTransitiveDependencies(modules, hoveredModule.value).has(module.id)
+      highlightedModule.value != null &&
+      allTransitiveDependencies(modules, highlightedModule.value).has(module.id)
   );
   const hoveredIsDepOfThis = useComputed(
     () =>
-      hoveredModule.value != null &&
-      allTransitiveDependencies(modules, module).has(hoveredModule.value.id)
+      highlightedModule.value != null &&
+      allTransitiveDependencies(modules, module).has(highlightedModule.value.id)
   );
-  const isHovered = useComputed(() => hoveredModule.value?.id === module.id);
+  const isHovered = useComputed(
+    () => highlightedModule.value?.id === module.id
+  );
   const className = useComputed(
     () =>
       `module ${isOpen.value ? "open" : ""} ${
         isDepOfHovered.value ? "imported-by-hovered" : ""
       } ${hoveredIsDepOfThis.value ? "imports-hovered" : ""} ${
         isHovered.value ? "hovered" : ""
-      }`
+      } ${selectedModule.value?.id === module.id ? "pinned" : ""}`
   );
 
   function showId(id: string) {
@@ -92,35 +99,43 @@ const Module = function Module({
   }, []);
   return (
     <>
-      <tr
-        className={className}
-        onMouseEnter={onMouseEnter}
-        onMouseLeave={onMouseLeave}
-        onClick={onClick}
-      >
+      <tr className={className}>
         <td
           style={{
             paddingLeft: `${depth * 2}em`,
           }}
         >
           <span
-            style={{
-              width: "1em",
-              display: "inline-block",
-              textAlign: "center",
+            onMouseEnter={onMouseEnter}
+            onMouseLeave={onMouseLeave}
+            onClick={onClick}
+            className="module-id"
+          >
+            <span className="icon">
+              {module.importedIds.length > 0 ? (
+                isOpen.value ? (
+                  "▼"
+                ) : (
+                  "▶"
+                )
+              ) : (
+                <span style={{ fontSize: "90%" }}>■</span>
+              )}
+            </span>
+            {showId(module.id)}
+          </span>
+          <button
+            className="pin"
+            onClick={() => {
+              if (selectedModule.value?.id === module.id) {
+                selectedModule.value = null;
+              } else {
+                selectedModule.value = module;
+              }
             }}
           >
-            {module.importedIds.length > 0 ? (
-              isOpen.value ? (
-                "▼"
-              ) : (
-                "▶"
-              )
-            ) : (
-              <span style={{ fontSize: "90%" }}>■</span>
-            )}
-          </span>
-          {showId(module.id)}
+            {selectedModule.value?.id === module.id ? "📍" : "📌"}
+          </button>
         </td>
         <td className="size self">
           <Size size={module.size} />
@@ -158,13 +173,14 @@ const Module = function Module({
               path={[...path, findModule(modules, dep)!]}
               entryPoint={entryPoint}
               hoveredModule={hoveredModule}
+              selectedModule={selectedModule}
               depth={depth + 1}
               sortKey={sortKey}
             />
           ))}
     </>
   );
-};
+}
 
 type ModuleInfo = {
   id: string;
@@ -218,6 +234,7 @@ export function App() {
       });
   }, [modules, sortKey]);
   const hoveredModule = useSignal<ModuleInfo | null>(null);
+  const selectedModule = useSignal<ModuleInfo | null>(null);
 
   return modules != null ? (
     <table>
@@ -245,6 +262,7 @@ export function App() {
             modules={modules}
             path={[module]}
             hoveredModule={hoveredModule}
+            selectedModule={selectedModule}
             sortKey={sortKey}
           />
         ))}

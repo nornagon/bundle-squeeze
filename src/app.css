@@ -4,13 +4,23 @@ td.size {
   padding: 0 0.25em;
 }
 
-table > thead > tr > th > button {
+table > thead > tr > th > button, .module button {
   background: none;
   border: none;
   cursor: pointer;
   font-size: inherit;
   font-weight: inherit;
   padding: 0;
+}
+
+.module .module-id {
+  cursor: pointer;
+}
+
+.module .icon {
+  display: inline-block;
+  text-align: center;
+  width: 1.5em;
 }
 
 .module.imported-by-hovered {
@@ -23,4 +33,15 @@ table > thead > tr > th > button {
 
 .module.hovered {
   color: red;
+}
+
+.module .pin {
+  display: none;
+  cursor: pointer;
+  user-select: none;
+  margin-left: 0.5em;
+}
+
+.module:hover .pin, .module.pinned .pin {
+  display: inline-block;
 }
