@@ -1,4 +1,9 @@
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
+import "./app.css";
+import { memo } from "preact/compat";
+import { Signal, signal, useComputed, useSignal } from "@preact/signals";
+
+type SortKey = "self" | "total" | "unique";
 
 function Size({ size }: { size: number }) {
   const sizeInKB = size / 1024;
@@ -21,28 +26,42 @@ function findModule(modules: ModuleInfo[], id: string) {
   return modulesMapCache.get(modules)!.get(id);
 }
 
-function Module({
+const Module = function Module({
   modules,
   path,
   entryPoint = path[path.length - 1],
   hoveredModule,
-  setHoveredModule,
+  sortKey,
+  depth = 0,
 }: {
   modules: ModuleInfo[];
   path: ModuleInfo[];
   entryPoint?: ModuleInfo;
-  hoveredModule: ModuleInfo | null;
-  setHoveredModule: (module: ModuleInfo | null) => void;
+  hoveredModule: Signal<ModuleInfo | null>;
+  depth?: number;
+  sortKey: SortKey;
 }) {
   const module = path[path.length - 1];
-  const [isOpen, setIsOpen] = useState(false);
-  const isDepOfHovered =
-    hoveredModule != null &&
-    allTransitiveDependencies(modules, hoveredModule).has(module.id);
-  const hoveredIsDepOfThis =
-    hoveredModule != null &&
-    allTransitiveDependencies(modules, module).has(hoveredModule.id);
-  const isHovered = hoveredModule?.id === module.id;
+  const isOpen = useSignal(false);
+  const isDepOfHovered = useComputed(
+    () =>
+      hoveredModule.value != null &&
+      allTransitiveDependencies(modules, hoveredModule.value).has(module.id)
+  );
+  const hoveredIsDepOfThis = useComputed(
+    () =>
+      hoveredModule.value != null &&
+      allTransitiveDependencies(modules, module).has(hoveredModule.value.id)
+  );
+  const isHovered = useComputed(() => hoveredModule.value?.id === module.id);
+  const className = useComputed(
+    () =>
+      `module ${isOpen.value ? "open" : ""} ${
+        isDepOfHovered.value ? "imported-by-hovered" : ""
+      } ${hoveredIsDepOfThis.value ? "imports-hovered" : ""} ${
+        isHovered.value ? "hovered" : ""
+      }`
+  );
 
   function showId(id: string) {
     if (/node_modules/.test(id)) {
@@ -64,61 +83,89 @@ function Module({
     }
     return id;
   }
+  const onMouseEnter = useCallback(
+    () => (hoveredModule.value = module),
+    [module]
+  );
+  const onMouseLeave = useCallback(() => (hoveredModule.value = null), []);
+  const onClick = useCallback(() => {
+    isOpen.value = !isOpen.value;
+  }, []);
   return (
-    <li>
-      <details open={isOpen}>
-        <summary
-          onClick={(e) => {
-            e.preventDefault();
-            setIsOpen(!isOpen);
-          }}
-          onMouseEnter={() => setHoveredModule(module)}
-          onMouseLeave={() => setHoveredModule(null)}
+    <>
+      <tr
+        className={className}
+        onMouseEnter={onMouseEnter}
+        onMouseLeave={onMouseLeave}
+        onClick={onClick}
+      >
+        <td
           style={{
-            color: isHovered
-              ? "red"
-              : isDepOfHovered
-              ? "blue"
-              : hoveredIsDepOfThis
-              ? "green"
-              : "inherit",
+            paddingLeft: `${depth * 2}em`,
           }}
         >
-          {showId(module.id)} (self <Size size={module.size} />, total{" "}
-          <Size size={totalSize(modules, module)} />, unique{" "}
-          <Size size={uniqueSize(modules, entryPoint, path)} />)
-        </summary>
-        {isOpen && (
-          <ul>
-            {module.importedIds
-              .toSorted((a, b) => {
-                const aModule = findModule(modules, a);
-                const bModule = findModule(modules, b);
-                if (aModule == null || bModule == null) {
-                  return 0;
-                }
-                return (
-                  uniqueSize(modules, entryPoint, [...path, bModule]) -
-                  uniqueSize(modules, entryPoint, [...path, aModule])
-                );
-              })
-              .map((dep) => (
-                <li key={dep}>
-                  <Module
-                    modules={modules}
-                    path={[...path, findModule(modules, dep)!]}
-                    entryPoint={entryPoint}
-                    hoveredModule={hoveredModule}
-                    setHoveredModule={setHoveredModule}
-                  />
-                </li>
-              ))}
-          </ul>
-        )}
-      </details>
-    </li>
+          <span
+            style={{
+              width: "1em",
+              display: "inline-block",
+              textAlign: "center",
+            }}
+          >
+            {module.importedIds.length > 0 ? (
+              isOpen.value ? (
+                "▼"
+              ) : (
+                "▶"
+              )
+            ) : (
+              <span style={{ fontSize: "90%" }}>■</span>
+            )}
+          </span>
+          {showId(module.id)}
+        </td>
+        <td className="size self">
+          <Size size={module.size} />
+        </td>
+        <td className="size total">
+          <Size size={totalSize(modules, module)} />
+        </td>
+        <td className="size unique">
+          <Size size={uniqueSize(modules, entryPoint, path)} />
+        </td>
+      </tr>
+      {isOpen.value &&
+        module.importedIds
+          .toSorted((a, b) => {
+            const aModule = findModule(modules, a);
+            const bModule = findModule(modules, b);
+            if (aModule == null || bModule == null) {
+              return 0;
+            }
+            if (sortKey === "self") {
+              return bModule.size - aModule.size;
+            } else if (sortKey === "total") {
+              return totalSize(modules, bModule) - totalSize(modules, aModule);
+            } else {
+              return (
+                uniqueSize(modules, entryPoint, [...path, bModule]) -
+                uniqueSize(modules, entryPoint, [...path, aModule])
+              );
+            }
+          })
+          .map((dep) => (
+            <Module
+              key={dep}
+              modules={modules}
+              path={[...path, findModule(modules, dep)!]}
+              entryPoint={entryPoint}
+              hoveredModule={hoveredModule}
+              depth={depth + 1}
+              sortKey={sortKey}
+            />
+          ))}
+    </>
   );
-}
+};
 
 type ModuleInfo = {
   id: string;
@@ -151,21 +198,41 @@ export function App() {
   const entryPoints = useMemo(() => {
     return modules?.filter((module) => importers(modules, module).length === 0);
   }, [modules]);
-  const [hoveredModule, setHoveredModule] = useState<ModuleInfo | null>(null);
+  const hoveredModule = useSignal<ModuleInfo | null>(null);
+  const [sortKey, setSortKey] = useState<SortKey>("unique");
 
   return (
     modules != null && (
-      <ul>
-        {entryPoints?.map((module) => (
-          <Module
-            key={module.id}
-            modules={modules}
-            path={[module]}
-            setHoveredModule={setHoveredModule}
-            hoveredModule={hoveredModule}
-          />
-        ))}
-      </ul>
+      <table>
+        <thead>
+          <tr>
+            <th>Module</th>
+            <th>
+              <button onClick={() => setSortKey("self")}>Self</button>
+              {sortKey === "self" && <span>▼</span>}
+            </th>
+            <th>
+              <button onClick={() => setSortKey("total")}>Total</button>
+              {sortKey === "total" && <span>▼</span>}
+            </th>
+            <th>
+              <button onClick={() => setSortKey("unique")}>Unique</button>
+              {sortKey === "unique" && <span>▼</span>}
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {entryPoints?.map((module) => (
+            <Module
+              key={module.id}
+              modules={modules}
+              path={[module]}
+              hoveredModule={hoveredModule}
+              sortKey={sortKey}
+            />
+          ))}
+        </tbody>
+      </table>
     )
   );
 }

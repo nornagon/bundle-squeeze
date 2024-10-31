@@ -1,0 +1,26 @@
+td.size {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  padding: 0 0.25em;
+}
+
+table > thead > tr > th > button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: inherit;
+  font-weight: inherit;
+  padding: 0;
+}
+
+.module.imported-by-hovered {
+  color: blue;
+}
+
+.module.imports-hovered {
+  color: green;
+}
+
+.module.hovered {
+  color: red;
+}
