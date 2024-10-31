@@ -30,13 +30,12 @@ export function bundleAnalyzer(): PluginOption {
       modules.push(m);
     },
     generateBundle() {
-      this.info(`Writing bundle-analyzer.json (${modules.length} modules)...`);
       this.emitFile({
         type: "asset",
-        fileName: "bundle-analyzer.json",
+        fileName: "bundle-squeeze.json",
         source: JSON.stringify(modules, null, 2),
       });
-      this.info(`Writing bundle-squeeze.html...`);
+      this.info(`Writing bundle-squeeze.html (${modules.length} modules)...`);
       this.emitFile({
         type: "asset",
         fileName: "bundle-squeeze.html",
