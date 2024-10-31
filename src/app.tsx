@@ -205,11 +205,19 @@ export function App() {
         )
       );
   }, []);
-  const entryPoints = useMemo(() => {
-    return modules?.filter((module) => importers(modules, module).length === 0);
-  }, [modules]);
-  const hoveredModule = useSignal<ModuleInfo | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("unique");
+  const entryPoints = useMemo(() => {
+    return modules
+      ?.filter((module) => importers(modules, module).length === 0)
+      .toSorted((a, b) => {
+        if (sortKey === "self") {
+          return b.size - a.size;
+        } else {
+          return totalSize(modules, b) - totalSize(modules, a);
+        }
+      });
+  }, [modules, sortKey]);
+  const hoveredModule = useSignal<ModuleInfo | null>(null);
 
   return modules != null ? (
     <table>
