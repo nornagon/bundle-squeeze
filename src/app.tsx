@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
 import "./app.css";
-import { memo } from "preact/compat";
-import { Signal, signal, useComputed, useSignal } from "@preact/signals";
+import { Signal, useComputed, useSignal } from "@preact/signals";
 
 type SortKey = "self" | "total" | "unique";
 
@@ -185,6 +184,17 @@ function importers(modules: ModuleInfo[], module: ModuleInfo) {
 export function App() {
   const [modules, setData] = useState<ModuleInfo[] | null>(null);
   useEffect(() => {
+    const bundleAnalyzer = document.getElementById("bundle-analyzer");
+    if (bundleAnalyzer?.textContent != null) {
+      try {
+        setData(JSON.parse(bundleAnalyzer.textContent));
+        return;
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    // In dev, we can put temp data in public/bundle-analyzer.json
     fetch("./bundle-analyzer.json")
       .then((res) => res.json())
       .then((data) =>
@@ -201,40 +211,38 @@ export function App() {
   const hoveredModule = useSignal<ModuleInfo | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("unique");
 
-  return (
-    modules != null && (
-      <table>
-        <thead>
-          <tr>
-            <th>Module</th>
-            <th>
-              <button onClick={() => setSortKey("self")}>Self</button>
-              {sortKey === "self" && <span>▼</span>}
-            </th>
-            <th>
-              <button onClick={() => setSortKey("total")}>Total</button>
-              {sortKey === "total" && <span>▼</span>}
-            </th>
-            <th>
-              <button onClick={() => setSortKey("unique")}>Unique</button>
-              {sortKey === "unique" && <span>▼</span>}
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {entryPoints?.map((module) => (
-            <Module
-              key={module.id}
-              modules={modules}
-              path={[module]}
-              hoveredModule={hoveredModule}
-              sortKey={sortKey}
-            />
-          ))}
-        </tbody>
-      </table>
-    )
-  );
+  return modules != null ? (
+    <table>
+      <thead>
+        <tr>
+          <th>Module</th>
+          <th>
+            <button onClick={() => setSortKey("self")}>Self</button>
+            {sortKey === "self" && <span>▼</span>}
+          </th>
+          <th>
+            <button onClick={() => setSortKey("total")}>Total</button>
+            {sortKey === "total" && <span>▼</span>}
+          </th>
+          <th>
+            <button onClick={() => setSortKey("unique")}>Unique</button>
+            {sortKey === "unique" && <span>▼</span>}
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {entryPoints?.map((module) => (
+          <Module
+            key={module.id}
+            modules={modules}
+            path={[module]}
+            hoveredModule={hoveredModule}
+            sortKey={sortKey}
+          />
+        ))}
+      </tbody>
+    </table>
+  ) : null;
 }
 
 const totalSizeCache = new Map<string, number>();
