@@ -2,7 +2,7 @@ import type { PluginOption } from "vite";
 import path from "node:path";
 import * as fs from "node:fs";
 
-const __dirname = import.meta.dirname;
+const __dirname = path.dirname(new URL(import.meta.url).pathname);
 const templateFile = path.join(__dirname, "..", "dist", "index.html");
 const template = fs.readFileSync(templateFile, "utf8");
 
