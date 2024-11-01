@@ -35,6 +35,10 @@ table > thead > tr > th > button, .module button {
   color: red;
 }
 
+.module.filtered {
+  color: lightgray;
+}
+
 .module .pin {
   display: none;
   cursor: pointer;

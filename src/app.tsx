@@ -1,8 +1,21 @@
 import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
 import "./app.css";
-import { Signal, useComputed, useSignal } from "@preact/signals";
+import {
+  ReadonlySignal,
+  Signal,
+  useComputed,
+  useSignal,
+} from "@preact/signals";
 
-type SortKey = "self" | "total" | "unique";
+type SortKey = "self" | "total" | "unique" | "removed";
+
+function cx(...args: (string | boolean | null | undefined)[]) {
+  return args
+    .flat()
+    .filter((x) => typeof x === "string")
+    .join(" ")
+    .trim();
+}
 
 function Size({ size }: { size: number }) {
   const sizeInKB = size / 1024;
@@ -25,12 +38,20 @@ function findModule(modules: ModuleInfo[], id: string) {
   return modulesMapCache.get(modules)!.get(id);
 }
 
+function setsIntersect<T>(a: Set<T>, b: Set<T>) {
+  for (const item of a) {
+    if (b.has(item)) return true;
+  }
+  return false;
+}
+
 function Module({
   modules,
   path,
   entryPoint = path[path.length - 1],
   hoveredModule,
   selectedModule,
+  filteredModules,
   sortKey,
   depth = 0,
 }: {
@@ -39,6 +60,7 @@ function Module({
   entryPoint?: ModuleInfo;
   hoveredModule: Signal<ModuleInfo | null>;
   selectedModule: Signal<ModuleInfo | null>;
+  filteredModules: ReadonlySignal<Set<string>>;
   depth?: number;
   sortKey: SortKey;
 }) {
@@ -60,13 +82,22 @@ function Module({
   const isHovered = useComputed(
     () => highlightedModule.value?.id === module.id
   );
-  const className = useComputed(
-    () =>
-      `module ${isOpen.value ? "open" : ""} ${
-        isDepOfHovered.value ? "imported-by-hovered" : ""
-      } ${hoveredIsDepOfThis.value ? "imports-hovered" : ""} ${
-        isHovered.value ? "hovered" : ""
-      } ${selectedModule.value?.id === module.id ? "pinned" : ""}`
+  const className = useComputed(() =>
+    cx(
+      "module",
+      isOpen.value && "open",
+      isDepOfHovered.value && "imported-by-hovered",
+      hoveredIsDepOfThis.value && "imports-hovered",
+      isHovered.value && "hovered",
+      selectedModule.value?.id === module.id && "pinned",
+      filteredModules.value.size > 0 &&
+        !filteredModules.value.has(module.id) &&
+        !setsIntersect(
+          filteredModules.value,
+          allTransitiveDependencies(modules, module)
+        ) &&
+        "filtered"
+    )
   );
 
   function showId(id: string) {
@@ -146,6 +177,9 @@ function Module({
         <td className="size unique">
           <Size size={uniqueSize(modules, entryPoint, path)} />
         </td>
+        <td className="size removed">
+          <Size size={removedSize(modules, entryPoint, module)} />
+        </td>
       </tr>
       {isOpen.value &&
         module.importedIds
@@ -174,6 +208,7 @@ function Module({
               entryPoint={entryPoint}
               hoveredModule={hoveredModule}
               selectedModule={selectedModule}
+              filteredModules={filteredModules}
               depth={depth + 1}
               sortKey={sortKey}
             />
@@ -235,40 +270,64 @@ export function App() {
   }, [modules, sortKey]);
   const hoveredModule = useSignal<ModuleInfo | null>(null);
   const selectedModule = useSignal<ModuleInfo | null>(null);
+  const filter = useSignal("");
+  const filteredModules = useComputed(() => {
+    return new Set(
+      modules
+        ?.filter((module) => module.id.includes(filter.value))
+        .map((m) => m.id)
+    );
+  });
 
-  return modules != null ? (
-    <table>
-      <thead>
-        <tr>
-          <th>Module</th>
-          <th>
-            <button onClick={() => setSortKey("self")}>Self</button>
-            {sortKey === "self" && <span>▼</span>}
-          </th>
-          <th>
-            <button onClick={() => setSortKey("total")}>Total</button>
-            {sortKey === "total" && <span>▼</span>}
-          </th>
-          <th>
-            <button onClick={() => setSortKey("unique")}>Unique</button>
-            {sortKey === "unique" && <span>▼</span>}
-          </th>
-        </tr>
-      </thead>
-      <tbody>
-        {entryPoints?.map((module) => (
-          <Module
-            key={module.id}
-            modules={modules}
-            path={[module]}
-            hoveredModule={hoveredModule}
-            selectedModule={selectedModule}
-            sortKey={sortKey}
-          />
-        ))}
-      </tbody>
-    </table>
-  ) : null;
+  return (
+    <div>
+      <table>
+        <thead>
+          <tr>
+            <th>
+              Module{" "}
+              <input
+                type="search"
+                placeholder="Filter"
+                value={filter.value}
+                onInput={(e) => (filter.value = e.currentTarget.value)}
+              />
+            </th>
+            <th>
+              <button onClick={() => setSortKey("self")}>Self</button>
+              {sortKey === "self" && <span>▼</span>}
+            </th>
+            <th>
+              <button onClick={() => setSortKey("total")}>Total</button>
+              {sortKey === "total" && <span>▼</span>}
+            </th>
+            <th>
+              <button onClick={() => setSortKey("unique")}>Unique</button>
+              {sortKey === "unique" && <span>▼</span>}
+            </th>
+            <th>
+              <button onClick={() => setSortKey("removed")}>Removed</button>
+              {sortKey === "removed" && <span>▼</span>}
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {modules &&
+            entryPoints?.map((module) => (
+              <Module
+                key={module.id}
+                modules={modules}
+                path={[module]}
+                hoveredModule={hoveredModule}
+                selectedModule={selectedModule}
+                filteredModules={filteredModules}
+                sortKey={sortKey}
+              />
+            ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 const totalSizeCache = new Map<string, number>();
@@ -379,5 +438,31 @@ function uniqueSize(
     total += module.size;
   }
   uniqueSizeCache.set(cacheKey, total);
+  return total;
+}
+
+const removedSizeCache = new Map<string, number>();
+function removedSize(
+  modules: ModuleInfo[],
+  entryPoint: ModuleInfo,
+  module: ModuleInfo
+) {
+  const cacheKey = `${entryPoint.id}\0${module.id}`;
+  if (removedSizeCache.has(cacheKey)) {
+    return removedSizeCache.get(cacheKey)!;
+  }
+  const reachableFromModule = new Set(reachableFrom(modules, module));
+  for (const m of reachableFrom(
+    modules,
+    entryPoint,
+    (p) => p[p.length - 1].id !== module.id
+  )) {
+    reachableFromModule.delete(m);
+  }
+  let total = 0;
+  for (const m of reachableFromModule) {
+    total += m.size;
+  }
+  removedSizeCache.set(cacheKey, total);
   return total;
 }
