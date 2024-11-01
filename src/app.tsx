@@ -193,12 +193,18 @@ function Module({
               return bModule.size - aModule.size;
             } else if (sortKey === "total") {
               return totalSize(modules, bModule) - totalSize(modules, aModule);
-            } else {
+            } else if (sortKey === "unique") {
               return (
                 uniqueSize(modules, entryPoint, [...path, bModule]) -
                 uniqueSize(modules, entryPoint, [...path, aModule])
               );
+            } else if (sortKey === "removed") {
+              return (
+                removedSize(modules, entryPoint, bModule) -
+                removedSize(modules, entryPoint, aModule)
+              );
             }
+            return 0;
           })
           .map((dep) => (
             <Module
