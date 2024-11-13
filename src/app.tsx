@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
+import { useCallback, useEffect } from "preact/hooks";
 import "./app.css";
 import {
   ReadonlySignal,
@@ -23,7 +23,8 @@ function Size({ size }: { size: number }) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(sizeInKB);
-  return <span>{formattedSize} KB</span>;
+
+  return <span style={{ whiteSpace: "nowrap" }}>{formattedSize} KB</span>;
 }
 
 const modulesMapCache = new WeakMap<ModuleInfo[], Map<string, ModuleInfo>>();
@@ -35,7 +36,11 @@ function findModule(modules: ModuleInfo[], id: string) {
     );
     modulesMapCache.set(modules, modulesMap);
   }
-  return modulesMapCache.get(modules)!.get(id);
+  const module = modulesMapCache.get(modules)!.get(id);
+  if (!module) {
+    throw new Error(`Module with id ${id} not found`);
+  }
+  return module;
 }
 
 function setsIntersect<T>(a: Set<T>, b: Set<T>) {
@@ -52,7 +57,9 @@ function Module({
   hoveredModule,
   selectedModule,
   filteredModules,
+  ignoredModules,
   sortKey,
+  sizer,
   depth = 0,
 }: {
   modules: ModuleInfo[];
@@ -61,8 +68,10 @@ function Module({
   hoveredModule: Signal<ModuleInfo | null>;
   selectedModule: Signal<ModuleInfo | null>;
   filteredModules: ReadonlySignal<Set<string>>;
+  ignoredModules: Signal<Set<string>>;
   depth?: number;
   sortKey: SortKey;
+  sizer: ReadonlySignal<Sizer>;
 }) {
   const module = path[path.length - 1];
   const isOpen = useSignal(false);
@@ -96,7 +105,8 @@ function Module({
           filteredModules.value,
           allTransitiveDependencies(modules, module)
         ) &&
-        "filtered"
+        "filtered",
+      ignoredModules.value.has(module.id) && "ignored"
     )
   );
 
@@ -141,6 +151,7 @@ function Module({
             onMouseLeave={onMouseLeave}
             onClick={onClick}
             className="module-id"
+            style={{ whiteSpace: "nowrap" }}
           >
             <span className="icon">
               {module.importedIds.length > 0 ? (
@@ -155,53 +166,71 @@ function Module({
             </span>
             {showId(module.id)}
           </span>
-          <button
-            className="pin"
-            onClick={() => {
-              if (selectedModule.value?.id === module.id) {
-                selectedModule.value = null;
-              } else {
-                selectedModule.value = module;
-              }
-            }}
-          >
-            {selectedModule.value?.id === module.id ? "📍" : "📌"}
-          </button>
+          <span className="module-actions">
+            <button
+              className="pin"
+              onClick={() => {
+                if (selectedModule.value?.id === module.id) {
+                  selectedModule.value = null;
+                } else {
+                  selectedModule.value = module;
+                }
+              }}
+            >
+              {selectedModule.value?.id === module.id ? "📍" : "📌"}
+            </button>
+            <button
+              className="ignore"
+              onClick={() => {
+                if (ignoredModules.value.has(module.id)) {
+                  ignoredModules.value = new Set(
+                    Array.from(ignoredModules.value).filter(
+                      (m) => m !== module.id
+                    )
+                  );
+                } else {
+                  ignoredModules.value = new Set(
+                    Array.from(ignoredModules.value).concat(module.id)
+                  );
+                }
+              }}
+            >
+              ⛔️
+            </button>
+          </span>
         </td>
         <td className="size self">
-          <Size size={module.size} />
+          <Size size={sizer.value.size(module)} />
         </td>
         <td className="size total">
-          <Size size={totalSize(modules, module)} />
+          <Size size={sizer.value.total(module)} />
         </td>
         <td className="size unique">
-          <Size size={uniqueSize(modules, entryPoint, path)} />
+          <Size size={sizer.value.unique(entryPoint, path)} />
         </td>
         <td className="size removed">
-          <Size size={removedSize(modules, entryPoint, module)} />
+          <Size size={sizer.value.removed(entryPoint, module)} />
         </td>
+        <td className="chunk">{module.chunk}</td>
       </tr>
       {isOpen.value &&
         module.importedIds
           .toSorted((a, b) => {
             const aModule = findModule(modules, a);
             const bModule = findModule(modules, b);
-            if (aModule == null || bModule == null) {
-              return 0;
-            }
             if (sortKey === "self") {
-              return bModule.size - aModule.size;
+              return sizer.value.size(bModule) - sizer.value.size(aModule);
             } else if (sortKey === "total") {
-              return totalSize(modules, bModule) - totalSize(modules, aModule);
+              return sizer.value.total(bModule) - sizer.value.total(aModule);
             } else if (sortKey === "unique") {
               return (
-                uniqueSize(modules, entryPoint, [...path, bModule]) -
-                uniqueSize(modules, entryPoint, [...path, aModule])
+                sizer.value.unique(entryPoint, [...path, bModule]) -
+                sizer.value.unique(entryPoint, [...path, aModule])
               );
             } else if (sortKey === "removed") {
               return (
-                removedSize(modules, entryPoint, bModule) -
-                removedSize(modules, entryPoint, aModule)
+                sizer.value.removed(entryPoint, bModule) -
+                sizer.value.removed(entryPoint, aModule)
               );
             }
             return 0;
@@ -210,13 +239,15 @@ function Module({
             <Module
               key={dep}
               modules={modules}
-              path={[...path, findModule(modules, dep)!]}
+              path={[...path, findModule(modules, dep)]}
               entryPoint={entryPoint}
               hoveredModule={hoveredModule}
               selectedModule={selectedModule}
               filteredModules={filteredModules}
+              ignoredModules={ignoredModules}
               depth={depth + 1}
               sortKey={sortKey}
+              sizer={sizer}
             />
           ))}
     </>
@@ -226,6 +257,8 @@ function Module({
 type ModuleInfo = {
   id: string;
   size: number;
+  renderedSize?: number;
+  chunk?: string;
   importedIds: string[];
   dynamicallyImportedIds: string[];
 };
@@ -239,12 +272,12 @@ function importers(modules: ModuleInfo[], module: ModuleInfo) {
 }
 
 export function App() {
-  const [modules, setData] = useState<ModuleInfo[] | null>(null);
+  const modules = useSignal<ModuleInfo[]>([]);
   useEffect(() => {
     const bundleAnalyzer = document.getElementById("bundle-analyzer");
     if (bundleAnalyzer?.textContent != null) {
       try {
-        setData(JSON.parse(bundleAnalyzer.textContent));
+        modules.value = JSON.parse(bundleAnalyzer.textContent);
         return;
       } catch (e) {
         console.error(e);
@@ -254,33 +287,31 @@ export function App() {
     // In dev, we can put temp data in public/bundle-analyzer.json
     fetch("./bundle-analyzer.json")
       .then((res) => res.json())
-      .then((data) =>
-        setData(
-          (data as ModuleInfo[]).toSorted(
-            (a, b) => totalSize(data, b) - totalSize(data, a)
-          )
-        )
-      );
+      .then((data) => (modules.value = data as ModuleInfo[]));
   }, []);
-  const [sortKey, setSortKey] = useState<SortKey>("unique");
-  const entryPoints = useMemo(() => {
-    return modules
-      ?.filter((module) => importers(modules, module).length === 0)
+  const sortKey = useSignal<SortKey>("unique");
+  const ignoredModules = useSignal(new Set<string>());
+  const sizer = useComputed(
+    () => new Sizer(modules.value, ignoredModules.value)
+  );
+  const entryPoints = useComputed(() => {
+    return modules.value
+      .filter((module) => importers(modules.value, module).length === 0)
       .toSorted((a, b) => {
-        if (sortKey === "self") {
-          return b.size - a.size;
+        if (sortKey.value === "self") {
+          return sizer.value.size(b) - sizer.value.size(a);
         } else {
-          return totalSize(modules, b) - totalSize(modules, a);
+          return sizer.value.total(b) - sizer.value.total(a);
         }
       });
-  }, [modules, sortKey]);
+  });
   const hoveredModule = useSignal<ModuleInfo | null>(null);
   const selectedModule = useSignal<ModuleInfo | null>(null);
   const filter = useSignal("");
   const filteredModules = useComputed(() => {
     return new Set(
-      modules
-        ?.filter((module) => module.id.includes(filter.value))
+      modules.value
+        .filter((module) => module.id.includes(filter.value))
         .map((m) => m.id)
     );
   });
@@ -300,34 +331,39 @@ export function App() {
               />
             </th>
             <th>
-              <button onClick={() => setSortKey("self")}>Self</button>
-              {sortKey === "self" && <span>▼</span>}
+              <button onClick={() => (sortKey.value = "self")}>Self</button>
+              {sortKey.value === "self" && <span>▼</span>}
             </th>
             <th>
-              <button onClick={() => setSortKey("total")}>Total</button>
-              {sortKey === "total" && <span>▼</span>}
+              <button onClick={() => (sortKey.value = "total")}>Total</button>
+              {sortKey.value === "total" && <span>▼</span>}
             </th>
             <th>
-              <button onClick={() => setSortKey("unique")}>Unique</button>
-              {sortKey === "unique" && <span>▼</span>}
+              <button onClick={() => (sortKey.value = "unique")}>Unique</button>
+              {sortKey.value === "unique" && <span>▼</span>}
             </th>
             <th>
-              <button onClick={() => setSortKey("removed")}>Removed</button>
-              {sortKey === "removed" && <span>▼</span>}
+              <button onClick={() => (sortKey.value = "removed")}>
+                Removed
+              </button>
+              {sortKey.value === "removed" && <span>▼</span>}
             </th>
+            <th>Chunk</th>
           </tr>
         </thead>
         <tbody>
           {modules &&
-            entryPoints?.map((module) => (
+            entryPoints.value.map((module) => (
               <Module
                 key={module.id}
-                modules={modules}
+                modules={modules.value}
                 path={[module]}
                 hoveredModule={hoveredModule}
                 selectedModule={selectedModule}
                 filteredModules={filteredModules}
-                sortKey={sortKey}
+                ignoredModules={ignoredModules}
+                sortKey={sortKey.value}
+                sizer={sizer}
               />
             ))}
         </tbody>
@@ -336,23 +372,98 @@ export function App() {
   );
 }
 
-const totalSizeCache = new Map<string, number>();
+class Sizer {
+  totalSizeCache = new Map<string, number>();
+  uniqueSizeCache = new Map<string, number>();
+  removedSizeCache = new Map<string, number>();
+  private ignoredModules: Set<string>;
 
-function totalSize(modules: ModuleInfo[], module: ModuleInfo) {
-  if (totalSizeCache.has(module.id)) {
-    return totalSizeCache.get(module.id)!;
-  }
-  const self = module.size;
-  const deps = allTransitiveDependencies(modules, module);
-  let total = self;
-  for (const dep of deps) {
-    const depModule = findModule(modules, dep);
-    if (depModule != null) {
-      total += depModule.size;
+  constructor(private modules: ModuleInfo[], ignoredModules: Set<string>) {
+    this.ignoredModules = new Set();
+    for (const module of ignoredModules) {
+      this.ignoredModules.add(module);
+      for (const dep of allTransitiveDependencies(
+        this.modules,
+        findModule(this.modules, module)
+      )) {
+        this.ignoredModules.add(dep);
+      }
     }
   }
-  totalSizeCache.set(module.id, total);
-  return total;
+
+  size(module: ModuleInfo) {
+    return module.renderedSize ?? module.size;
+  }
+
+  total(module: ModuleInfo) {
+    if (/components/.test(module.id)) {
+      debugger;
+    }
+    if (this.totalSizeCache.has(module.id)) {
+      return this.totalSizeCache.get(module.id)!;
+    }
+    const deps = allTransitiveDependencies(this.modules, module);
+    let total = 0;
+    if (!this.ignoredModules.has(module.id)) {
+      total += this.size(module);
+    }
+    for (const dep of deps) {
+      if (dep === module.id) continue;
+      if (!this.ignoredModules.has(dep)) {
+        total += this.size(findModule(this.modules, dep));
+      }
+    }
+    this.totalSizeCache.set(module.id, total);
+    return total;
+  }
+  unique(entryPoint: ModuleInfo, path: ModuleInfo[]) {
+    const cacheKey = `${entryPoint.id}\0${path.map((m) => m.id).join("\0")}`;
+    if (this.uniqueSizeCache.has(cacheKey)) {
+      return this.uniqueSizeCache.get(cacheKey)!;
+    }
+    const reachableFromChokePoint = new Set(
+      reachableFrom(this.modules, path[path.length - 1])
+    );
+    for (const module of reachableFrom(
+      this.modules,
+      entryPoint,
+      (p) =>
+        !(p.length === path.length && p.every((m, i) => m.id === path[i].id))
+    )) {
+      reachableFromChokePoint.delete(module);
+    }
+    let total = 0;
+    for (const module of reachableFromChokePoint) {
+      if (!this.ignoredModules.has(module.id)) {
+        total += this.size(module);
+      }
+    }
+    this.uniqueSizeCache.set(cacheKey, total);
+    return total;
+  }
+
+  removed(entryPoint: ModuleInfo, module: ModuleInfo) {
+    const cacheKey = `${entryPoint.id}\0${module.id}`;
+    if (this.removedSizeCache.has(cacheKey)) {
+      return this.removedSizeCache.get(cacheKey)!;
+    }
+    const reachableFromModule = new Set(reachableFrom(this.modules, module));
+    for (const m of reachableFrom(
+      this.modules,
+      entryPoint,
+      (p) => p[p.length - 1].id !== module.id
+    )) {
+      reachableFromModule.delete(m);
+    }
+    let total = 0;
+    for (const m of reachableFromModule) {
+      if (!this.ignoredModules.has(m.id)) {
+        total += this.size(m);
+      }
+    }
+    this.removedSizeCache.set(cacheKey, total);
+    return total;
+  }
 }
 
 const transitiveDependenciesCache = new Map<string, Set<string>>();
@@ -375,23 +486,19 @@ function allTransitiveDependencies(
   const deps = new Set<string>();
   for (const dep of module.importedIds) {
     const depModule = findModule(modules, dep);
-    if (depModule != null) {
-      deps.add(depModule.id);
-      for (const transitiveDep of allTransitiveDependencies(
-        modules,
-        depModule,
-        visited
-      )) {
-        deps.add(transitiveDep);
-      }
+    deps.add(depModule.id);
+    for (const transitiveDep of allTransitiveDependencies(
+      modules,
+      depModule,
+      visited
+    )) {
+      deps.add(transitiveDep);
     }
   }
 
   transitiveDependenciesCache.set(module.id, deps);
   return deps;
 }
-
-const uniqueSizeCache = new Map<string, number>();
 
 function* reachableFrom(
   modules: ModuleInfo[],
@@ -411,64 +518,10 @@ function* reachableFrom(
     for (const dep of current.importedIds) {
       if (visited.has(dep)) continue;
       const depModule = findModule(modules, dep);
-      if (depModule == null) throw new Error(`Module ${dep} not found`);
       const newPath = [...path, depModule];
       if (condition(newPath)) {
         stack.push(newPath);
       }
     }
   }
-}
-
-function uniqueSize(
-  modules: ModuleInfo[],
-  entryPoint: ModuleInfo,
-  path: ModuleInfo[]
-) {
-  const cacheKey = `${entryPoint.id}\0${path.map((m) => m.id).join("\0")}`;
-  if (uniqueSizeCache.has(cacheKey)) {
-    return uniqueSizeCache.get(cacheKey)!;
-  }
-  const reachableFromChokePoint = new Set(
-    reachableFrom(modules, path[path.length - 1])
-  );
-  for (const module of reachableFrom(
-    modules,
-    entryPoint,
-    (p) => !(p.length === path.length && p.every((m, i) => m.id === path[i].id))
-  )) {
-    reachableFromChokePoint.delete(module);
-  }
-  let total = 0;
-  for (const module of reachableFromChokePoint) {
-    total += module.size;
-  }
-  uniqueSizeCache.set(cacheKey, total);
-  return total;
-}
-
-const removedSizeCache = new Map<string, number>();
-function removedSize(
-  modules: ModuleInfo[],
-  entryPoint: ModuleInfo,
-  module: ModuleInfo
-) {
-  const cacheKey = `${entryPoint.id}\0${module.id}`;
-  if (removedSizeCache.has(cacheKey)) {
-    return removedSizeCache.get(cacheKey)!;
-  }
-  const reachableFromModule = new Set(reachableFrom(modules, module));
-  for (const m of reachableFrom(
-    modules,
-    entryPoint,
-    (p) => p[p.length - 1].id !== module.id
-  )) {
-    reachableFromModule.delete(m);
-  }
-  let total = 0;
-  for (const m of reachableFromModule) {
-    total += m.size;
-  }
-  removedSizeCache.set(cacheKey, total);
-  return total;
 }

@@ -39,13 +39,20 @@ table > thead > tr > th > button, .module button {
   color: lightgray;
 }
 
-.module .pin {
+.module.ignored {
+  text-decoration: line-through;
+}
+
+.module .module-actions {
   display: none;
   cursor: pointer;
   user-select: none;
   margin-left: 0.5em;
 }
 
-.module:hover .pin, .module.pinned .pin {
+.module:hover .module-actions, .module.pinned .module-actions {
   display: inline-block;
+}
+.module:not(:hover) .module-actions :not(.pin) {
+  display: none;
 }

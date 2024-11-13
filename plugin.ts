@@ -10,11 +10,16 @@ export function bundleAnalyzer(): PluginOption {
   const modules: {
     id: string;
     size: number;
+    renderedSize?: number;
+    chunk?: string;
     importedIds: readonly string[];
     dynamicallyImportedIds: readonly string[];
   }[] = [];
   const cwd = process.cwd();
-  function mapId(id: string) {
+  function mapId(id: string): string {
+    if (id.startsWith("\x00/")) {
+      return "\x00" + mapId(id.slice(1));
+    }
     return path.relative(cwd, id);
   }
   return {
@@ -29,7 +34,23 @@ export function bundleAnalyzer(): PluginOption {
       };
       modules.push(m);
     },
-    generateBundle() {
+    generateBundle(_opts, bundle) {
+      for (const [file, source] of Object.entries(bundle)) {
+        if (source.type === "chunk") {
+          for (const [moduleIdUnmapped, module] of Object.entries(
+            source.modules
+          )) {
+            const moduleId = mapId(moduleIdUnmapped);
+            const mod = modules.find((m) => m.id === moduleId);
+            if (mod) {
+              mod.renderedSize = module.renderedLength;
+              mod.chunk = file;
+            } else {
+              this.info(`Unknown module: ${moduleId}`);
+            }
+          }
+        }
+      }
       this.emitFile({
         type: "asset",
         fileName: "bundle-squeeze.json",
